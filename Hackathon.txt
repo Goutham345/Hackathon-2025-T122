@@ -1,0 +1,73 @@
+#include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
+#define BLOCK_SIZE 512
+#define MAX_FILE_SIZE 10 * 1024 * 1024 
+typedef struct {
+    char *name;
+    unsigned char *header;
+    int header_size;
+    unsigned char *footer;
+    int footer_size;
+} FileSignature;
+
+unsigned char pdf_header[] = {0x25, 0x50, 0x44, 0x46};          
+unsigned char pdf_footer[] = {0x25, 0x25, 0x45, 0x4F, 0x46};    
+
+unsigned char jpg_header[] = {0xFF, 0xD8};                      
+unsigned char jpg_footer[] = {0xFF, 0xD9};                     
+FileSignature signatures[] = {
+    {"recovered.pdf", pdf_header, sizeof(pdf_header), pdf_footer, sizeof(pdf_footer)},
+    {"recovered.jpg", jpg_header, sizeof(jpg_header), jpg_footer, sizeof(jpg_footer)},
+};
+
+int search_and_recover(FILE *fp, FileSignature sig) {
+    unsigned char *buffer = malloc(MAX_FILE_SIZE);
+    int recovered = 0;
+    size_t offset = 0;
+    while (!feof(fp)) {
+        fread(buffer, 1, MAX_FILE_SIZE, fp);
+        for (size_t i = 0; i < MAX_FILE_SIZE - sig.header_size; i++) {
+            if (memcmp(&buffer[i], sig.header, sig.header_size) == 0) {
+                for (size_t j = i + sig.header_size; j < MAX_FILE_SIZE - sig.footer_size; j++) {
+                    if (memcmp(&buffer[j], sig.footer, sig.footer_size) == 0) {
+                        char filename[64];
+                        sprintf(filename, "%s_%d", sig.name, ++recovered);
+                        FILE *out = fopen(filename, "wb");
+                        if (!out) {
+                            perror("Error writing file");
+                            return recovered;
+                        }
+                        fwrite(&buffer[i], 1, j - i + sig.footer_size, out);
+                        fclose(out);
+                        printf("Recovered: %s\n", filename);
+                        i = j + sig.footer_size; 
+                        break;
+                    }
+                }
+            }
+        }
+        offset += MAX_FILE_SIZE;
+        fseek(fp, offset, SEEK_SET);
+    }
+    free(buffer);
+    return recovered;
+}
+int main() {
+    char file_path[256];
+    printf("Enter the path to the disk image file: ");
+    scanf("%255s", file_path);
+    FILE *fp = fopen(file_path, "rb");
+    if (!fp) {
+        perror("Error opening disk image");
+        return 1;
+    }
+    int total_recovered = 0;
+    for (int i = 0; i < sizeof(signatures) / sizeof(signatures[0]); i++) {
+        total_recovered += search_and_recover(fp, signatures[i]);
+        rewind(fp); 
+    }
+    printf("Total files recovered: %d\n", total_recovered);
+    fclose(fp);
+    return 0;
+}
